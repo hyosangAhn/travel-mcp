@@ -10,6 +10,8 @@ import { callDataGoKr, lowerKeys } from "./datagokr";
 
 const URL_ = "https://apis.data.go.kr/B551011/TatsCnctrRateService/tatsCnctrRatedList";
 const MAX_NAMES = 40;
+const PAGE_SIZE = 1000;
+const MAX_PAGES = 5; // API 문서상 시군구당 최대 5페이지
 
 type Day = { date: string; rate: number };
 
@@ -36,16 +38,23 @@ export async function crowdForecast(
   apiKey: string,
   opts: { sido: string; sigungu: string; attraction?: string; startDate?: string; endDate?: string },
 ) {
-  const { items } = await callDataGoKr(apiKey, URL_, {
-    MobileOS: "ETC",
-    MobileApp: "travel-mcp",
-    _type: "json",
-    numOfRows: 1000,
-    pageNo: 1,
-    areaCd: opts.sido,
-    signguCd: opts.sigungu,
-    tAtsNm: opts.attraction,
-  });
+  // 한 페이지 최대 1000행 = 관광지 약 33곳 x 30일. 통영(2820행)처럼 큰 시군구는 여러 페이지라
+  // 첫 페이지만 읽으면 가나다순 앞쪽 관광지만 보게 된다. 첫 페이지의 totalCount로 나머지를 병렬로 읽는다.
+  const page = (pageNo: number) =>
+    callDataGoKr(apiKey, URL_, {
+      MobileOS: "ETC",
+      MobileApp: "travel-mcp",
+      _type: "json",
+      numOfRows: PAGE_SIZE,
+      pageNo,
+      areaCd: opts.sido,
+      signguCd: opts.sigungu,
+      tAtsNm: opts.attraction,
+    });
+  const first = await page(1);
+  const pages = Math.min(MAX_PAGES, Math.ceil(first.totalCount / PAGE_SIZE));
+  const rest = await Promise.all(Array.from({ length: pages - 1 }, (_, i) => page(i + 2)));
+  const items = [first, ...rest].flatMap((p) => p.items);
   const rows = items
     .map(lowerKeys)
     .filter((r) => (!opts.startDate || String(r.baseymd) >= opts.startDate) && (!opts.endDate || String(r.baseymd) <= opts.endDate));
@@ -59,6 +68,17 @@ export async function crowdForecast(
     byPlace.get(name)!.push(day);
     if (!byDate.has(day.date)) byDate.set(day.date, []);
     byDate.get(day.date)!.push(day.rate);
+  }
+  if (!items.length) {
+    return {
+      sigunguCode: opts.sigungu,
+      attractions: [],
+      note: opts.attraction
+        ? `"${opts.attraction}"과 일치하는 관광지가 없다. attraction 없이 다시 조회해 목록에서 이름을 고를 것.`
+        : opts.sido === "12"
+          ? "전남광주통합특별시(옛 광주·전남)는 통합 이후 한국관광공사 집중률 데이터가 갱신되지 않아 옛 코드와 새 코드 모두 비어 있다."
+          : "이 시군구는 집중률 예측 데이터가 제공되지 않는다.",
+    };
   }
   const district = String(rows[0]?.signgunm ?? opts.sigungu);
   const note =

@@ -32,7 +32,7 @@ const contentType = z
 const area = z
   .enum(Object.keys(tour.AREA_CODES) as [tour.AreaName, ...tour.AreaName[]])
   .optional()
-  .describe("광역 지역. 생략하면 전국");
+  .describe("광역 지역. 생략하면 전국. 광주와 전남은 전남광주통합특별시로 합쳐져 어느 쪽을 골라도 둘 다 나온다");
 const limit = z.number().int().min(1).max(30).default(10).describe("결과 개수");
 const page = z.number().int().min(1).default(1).describe("페이지 번호");
 const location = z.string().min(1).describe('장소명이나 주소 (예: "강릉역", "제주시 애월읍")');

@@ -94,7 +94,8 @@ function landRegId(sido: string, sigungu: string) {
   if (sido === "51") return YEONGDONG.has(sigungu) ? "11D20000" : "11D10000";
   if (["30", "36", "44"].includes(sido)) return "11C20000"; // 대전 세종 충남
   if (sido === "43") return "11C10000"; // 충북
-  if (["29", "46"].includes(sido)) return "11F20000"; // 광주 전남
+  // 전남광주통합특별시(12). 옛 광주(29)·전남(46) 코드도 남겨둔다. 예보구역은 통합 전과 같은 11F20000이다.
+  if (["12", "29", "46"].includes(sido)) return "11F20000";
   if (sido === "52") return "11F10000"; // 전북
   if (["27", "47"].includes(sido)) return "11H10000"; // 대구 경북
   if (["26", "31", "48"].includes(sido)) return "11H20000"; // 부산 울산 경남
@@ -121,9 +122,10 @@ function nearestTa(lon: number, lat: number) {
 }
 
 export async function midTerm(apiKey: string, lon: number, lat: number, sido: string, sigungu: string) {
-  const regId = landRegId(sido, sigungu);
-  if (!regId) throw new Error(`중기예보 구역을 찾을 수 없음 (시도 코드 ${sido})`);
   const ta = nearestTa(lon, lat);
+  // 시도 코드는 행정구역 개편으로 바뀐다 (예: 광주·전남 -> 12). 모르는 코드면 가장 가까운 기온 지점이 속한
+  // 육상 예보구역을 쓴다. 지점 코드 3~4번째 글자가 구역이다 (11D20501 -> 11D20000, 21F20801 -> 11F20000).
+  const regId = landRegId(sido, sigungu) ?? `11${ta[1][2]}${"BG".includes(ta[1][2]) ? "0" : ta[1][3]}0000`;
   const tmFc = midBase();
   const [land, temp] = await Promise.all([
     callDataGoKr(apiKey, MID_LAND, { dataType: "JSON", numOfRows: 10, pageNo: 1, regId, tmFc }),
