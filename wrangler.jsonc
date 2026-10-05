@@ -5,7 +5,9 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
-  "dev": { "port": 8799 }
+  "dev": { "port": 8799 },
+  // 축제 목록 캐시 (src/cache.ts). 로컬 dev에서는 wrangler가 만든 로컬 KV를 쓴다.
+  "kv_namespaces": [{ "binding": "CACHE", "id": "f901117688d1435aaef0cb1390a06e7f" }]
   // Secrets (set with `npx wrangler secret put <NAME>`, never commit them):
   //   TOUR_API_KEY    - data.go.kr TourAPI 인증키 (Decoding 키)
   //   KAKAO_REST_KEY  - Kakao Developers REST API 키
