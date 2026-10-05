@@ -18,8 +18,13 @@ export async function callDataGoKr(
     if (v !== undefined && v !== "") u.searchParams.set(k, String(v));
   }
 
-  const res = await fetch(u);
-  const text = await res.text();
+  // The gateway intermittently answers "서비스 연결실패" (backend unreachable); one retry usually clears it.
+  let res = await fetch(u);
+  let text = await res.text();
+  if (res.status >= 500 || text.includes("연결실패")) {
+    res = await fetch(u);
+    text = await res.text();
+  }
   const service = u.pathname.split("/").slice(2).join("/");
   let json: any;
   try {

@@ -1,6 +1,6 @@
 # travel-mcp
 
-한국관광공사 TourAPI, 카카오, 기상청, 국토교통부 TAGO, ODsay API를 MCP 도구로 묶어 Cloudflare Workers에 원격 MCP 서버로 띄운다.
+한국관광공사 TourAPI, 카카오, 기상청, 국토교통부 TAGO API를 MCP 도구로 묶어 Cloudflare Workers에 원격 MCP 서버로 띄운다.
 URL 하나로 claude.ai(웹, 모바일), Claude Desktop, Claude Code, ChatGPT(Developer Mode)에서 함께 쓸 수 있다.
 
 ## 도구
@@ -14,7 +14,6 @@ URL 하나로 claude.ai(웹, 모바일), Claude Desktop, Claude Code, ChatGPT(De
 | `search_festivals` | TourAPI | 기간 내 축제와 행사 |
 | `search_local` | 카카오 로컬 | 맛집, 카페, 주차장 등 일반 장소 검색 |
 | `get_route_time` | 카카오모빌리티 | 자동차 이동 거리와 시간 (경유지 최대 5개, 구간별 시간) |
-| `get_transit_route` | ODsay | 대중교통 경로, 소요 시간, 요금, 환승 |
 | `get_weather_forecast` | 기상청 | 날짜별 기온, 강수확률, 오전/오후 날씨 (단기 + 중기, 10일까지) |
 | `get_crowd_forecast` | 한국관광공사 | 관광지 집중률 예측 (향후 30일, 붐비는 날/한산한 날) |
 | `search_trains` | TAGO | 열차 시간표와 운임 (좌석 잔여·예매 없음) |
@@ -33,9 +32,7 @@ URL 하나로 claude.ai(웹, 모바일), Claude Desktop, Claude Code, ChatGPT(De
    - [기상청_단기예보 조회서비스](https://www.data.go.kr/data/15084084/openapi.do), [기상청_중기예보 조회서비스](https://www.data.go.kr/data/15059468/openapi.do)
    - [TAGO 열차정보](https://www.data.go.kr/data/15098552/openapi.do), [TAGO 고속버스정보](https://www.data.go.kr/data/15098522/openapi.do), [TAGO 국내항공운항정보](https://www.data.go.kr/data/15098526/openapi.do)
    - [한국관광공사_관광지 집중률 방문자 추이 예측 정보](https://www.data.go.kr/data/15128555/openapi.do)
-4. **ODsay 키 (선택)**: [ODsay LAB](https://lab.odsay.com)에서 **Web** 플랫폼으로 등록하고 URI에 배포 주소와 `http://localhost:8799`를 넣는다.
-   Workers는 고정 IP가 없어서 Server 키(IP 등록)는 쓸 수 없다. 서버가 요청에 Referer로 자기 주소를 붙여 보낸다.
-5. **Cloudflare 계정**: 무료 플랜이면 충분하다.
+4. **Cloudflare 계정**: 무료 플랜이면 충분하다.
 
 ## 로컬 실행
 

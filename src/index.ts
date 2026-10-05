@@ -13,8 +13,6 @@ export interface Env {
   KAKAO_REST_KEY: string;
   /** Secret path segment: the MCP endpoint is served at /mcp/<MCP_PATH_TOKEN>. */
   MCP_PATH_TOKEN: string;
-  /** ODsay LAB Web 키. 없으면 get_transit_route만 비활성. */
-  ODSAY_API_KEY?: string;
 }
 
 const ok = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 1) }] });
@@ -37,8 +35,7 @@ const location = z.string().min(1).describe('장소명이나 주소 (예: "강�
 
 const date = z.string().regex(/^\d{8}$/).describe("날짜 (YYYYMMDD)");
 
-/** siteOrigin: this Worker's origin, sent as Referer to ODsay (Web keys are bound to a registered URI). */
-function buildServer(env: Env, siteOrigin: string) {
+function buildServer(env: Env) {
   const server = new McpServer({ name: "travel-mcp", version: "0.1.0" });
 
   server.registerTool(
@@ -265,9 +262,14 @@ function buildServer(env: Env, siteOrigin: string) {
           weather.midTerm(env.TOUR_API_KEY, p.x, p.y, region.sido, region.sigungu),
         ]);
         if (short.status === "rejected" && mid.status === "rejected") throw short.reason;
-        const shortDays = short.status === "fulfilled" ? short.value.days : [];
+        const midAll = mid.status === "fulfilled" ? mid.value.days : [];
+        const midDates = new Set(midAll.map((d) => d.date));
+        // Short-term wins, except for its trailing partial day when mid-term covers that date.
+        const shortDays = (short.status === "fulfilled" ? short.value.days : [])
+          .filter((d) => !(d.partial && midDates.has(d.date)))
+          .map(({ partial, ...d }) => d);
         const seen = new Set(shortDays.map((d) => d.date));
-        const midDays = mid.status === "fulfilled" ? mid.value.days.filter((d) => !seen.has(d.date)) : [];
+        const midDays = midAll.filter((d) => !seen.has(d.date));
         const errors = [short, mid].flatMap((r) => (r.status === "rejected" ? [String(r.reason?.message ?? r.reason)] : []));
         return ok({
           location: { ...p, region: region.name },
@@ -365,34 +367,6 @@ function buildServer(env: Env, siteOrigin: string) {
     },
   );
 
-  server.registerTool(
-    "get_transit_route",
-    {
-      title: "대중교통 길찾기",
-      description:
-        "ODsay로 대중교통(지하철, 버스, 도시 간 열차/버스) 경로와 소요 시간, 요금, 환승을 찾는다. 자동차는 get_route_time을 쓴다.",
-      inputSchema: z.object({
-        origin: location.describe("출발지"),
-        destination: location.describe("도착지"),
-        limit: z.number().int().min(1).max(5).default(3).describe("경로 후보 수"),
-      }),
-      annotations: { readOnlyHint: true, openWorldHint: true },
-    },
-    async ({ origin, destination, limit }) => {
-      try {
-        if (!env.ODSAY_API_KEY) throw new Error("ODSAY_API_KEY가 설정되지 않음");
-        const [o, d] = await Promise.all([
-          kakao.geocode(env.KAKAO_REST_KEY, origin),
-          kakao.geocode(env.KAKAO_REST_KEY, destination),
-        ]);
-        const routes = await transport.transitRoute(env.ODSAY_API_KEY, siteOrigin, o, d, limit);
-        return ok({ origin: o, destination: d, routes });
-      } catch (e) {
-        return fail(e);
-      }
-    },
-  );
-
   return server;
 }
 
@@ -407,7 +381,7 @@ export default {
     if (new URL(request.url).pathname !== route) {
       return new Response("Not found", { status: 404 });
     }
-    handler ??= createMcpHandler(() => buildServer(env, new URL(request.url).origin), { route });
+    handler ??= createMcpHandler(() => buildServer(env), { route });
     return handler(request, env, ctx);
   },
 } satisfies ExportedHandler<Env>;

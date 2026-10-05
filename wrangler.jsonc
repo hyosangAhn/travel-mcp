@@ -5,11 +5,9 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
-  // ODsay Web 키에 등록한 로컬 URI(http://localhost:8799)와 맞춘다.
   "dev": { "port": 8799 }
   // Secrets (set with `npx wrangler secret put <NAME>`, never commit them):
   //   TOUR_API_KEY    - data.go.kr TourAPI 인증키 (Decoding 키)
   //   KAKAO_REST_KEY  - Kakao Developers REST API 키
   //   MCP_PATH_TOKEN  - 추측 불가능한 랜덤 문자열 (엔드포인트: /mcp/<token>)
-  //   ODSAY_API_KEY   - ODsay LAB Web 키 (선택, 대중교통 길찾기용)
 }

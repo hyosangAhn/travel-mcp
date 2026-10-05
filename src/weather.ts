@@ -80,6 +80,8 @@ export async function shortTerm(apiKey: string, lon: number, lat: number) {
       maxRainProbPct: Math.max(0, ...num(rows, "POP")),
       am: condition(am),
       pm: condition(pm),
+      // 발표 범위 끝자락 날은 몇 시간치만 있어 최저/최고가 왜곡된다. 중기예보가 있으면 그걸 쓴다.
+      partial: tmp.length < 20,
     };
   });
   return { source: "단기예보", base: `${base.base_date} ${base.base_time}`, grid: { nx, ny }, days };
