@@ -11,7 +11,18 @@ import { callDataGoKr, lowerKeys } from "./datagokr";
 const URL_ = "https://apis.data.go.kr/B551011/TatsCnctrRateService/tatsCnctrRatedList";
 const MAX_NAMES = 40;
 const PAGE_SIZE = 1000;
-const MAX_PAGES = 5; // API 문서상 시군구당 최대 5페이지
+// 제주시 7320행(8페이지), 서귀포 6120행(7페이지)까지 확인. 요청당 외부 호출 50번 한도 안에서 여유를 둔다.
+const MAX_PAGES = 10;
+
+// 행정구역 개편으로 새 시군구 코드가 생겼지만 집중률 데이터는 아직 옛 코드로만 있는 곳.
+// 인천(2026): 중구·동구 -> 제물포구(28125)·영종구(28155), 서구 -> 서해구(28275)·검단구(28290).
+// 옛 중구는 원도심과 영종도를 함께 담고 있어 나눌 수 없으니 둘 다 옛 중구 전체로 답한다.
+const LEGACY_SIGUNGU: Record<string, { codes: string[]; label: string }> = {
+  "28125": { codes: ["28110", "28140"], label: "옛 인천 중구·동구" },
+  "28155": { codes: ["28110"], label: "옛 인천 중구 (영종도와 원도심 포함)" },
+  "28275": { codes: ["28260"], label: "옛 인천 서구" },
+  "28290": { codes: ["28260"], label: "옛 인천 서구" },
+};
 
 type Day = { date: string; rate: number };
 
@@ -40,21 +51,26 @@ export async function crowdForecast(
 ) {
   // 한 페이지 최대 1000행 = 관광지 약 33곳 x 30일. 통영(2820행)처럼 큰 시군구는 여러 페이지라
   // 첫 페이지만 읽으면 가나다순 앞쪽 관광지만 보게 된다. 첫 페이지의 totalCount로 나머지를 병렬로 읽는다.
-  const page = (pageNo: number) =>
-    callDataGoKr(apiKey, URL_, {
-      MobileOS: "ETC",
-      MobileApp: "travel-mcp",
-      _type: "json",
-      numOfRows: PAGE_SIZE,
-      pageNo,
-      areaCd: opts.sido,
-      signguCd: opts.sigungu,
-      tAtsNm: opts.attraction,
-    });
-  const first = await page(1);
-  const pages = Math.min(MAX_PAGES, Math.ceil(first.totalCount / PAGE_SIZE));
-  const rest = await Promise.all(Array.from({ length: pages - 1 }, (_, i) => page(i + 2)));
-  const items = [first, ...rest].flatMap((p) => p.items);
+  const fetchDistrict = async (sigungu: string) => {
+    const page = (pageNo: number) =>
+      callDataGoKr(apiKey, URL_, {
+        MobileOS: "ETC",
+        MobileApp: "travel-mcp",
+        _type: "json",
+        numOfRows: PAGE_SIZE,
+        pageNo,
+        areaCd: opts.sido,
+        signguCd: sigungu,
+        tAtsNm: opts.attraction,
+      });
+    const first = await page(1);
+    const pages = Math.min(MAX_PAGES, Math.ceil(first.totalCount / PAGE_SIZE));
+    const rest = await Promise.all(Array.from({ length: pages - 1 }, (_, i) => page(i + 2)));
+    return [first, ...rest].flatMap((p) => p.items);
+  };
+  let items = await fetchDistrict(opts.sigungu);
+  const legacy = LEGACY_SIGUNGU[opts.sigungu];
+  if (!items.length && legacy) items = (await Promise.all(legacy.codes.map(fetchDistrict))).flat();
   const rows = items
     .map(lowerKeys)
     .filter((r) => (!opts.startDate || String(r.baseymd) >= opts.startDate) && (!opts.endDate || String(r.baseymd) <= opts.endDate));
@@ -80,7 +96,7 @@ export async function crowdForecast(
           : "이 시군구는 집중률 예측 데이터가 제공되지 않는다.",
     };
   }
-  const district = String(rows[0]?.signgunm ?? opts.sigungu);
+  const district = legacy && items.length ? legacy.label : String(rows[0]?.signgunm ?? opts.sigungu);
   const note =
     "집중률은 방문자 수나 혼잡 퍼센트가 아니다. 각 관광지의 평소 대비 붐빔을 0~100으로 매긴 상대 지수로, 같은 장소의 날짜끼리만 비교할 수 있다. 값 형식은 'MM/DD 지수'.";
 

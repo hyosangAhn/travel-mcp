@@ -284,6 +284,7 @@ function buildServer(env: Env) {
         const errors = [short, mid].flatMap((r) => (r.status === "rejected" ? [String(r.reason?.message ?? r.reason)] : []));
         return ok({
           location: { ...p, region: region.name },
+          midTermPoint: mid.status === "fulfilled" ? `${mid.value.tempPoint} 기온 / ${mid.value.landRegion} 육상` : undefined,
           days: [...shortDays.map((d) => ({ ...d, source: "단기" })), ...midDays.map((d) => ({ ...d, source: "중기" }))],
           errors: errors.length ? errors : undefined,
         });

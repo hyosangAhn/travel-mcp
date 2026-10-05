@@ -114,7 +114,18 @@ const TA_POINTS: [string, string, number, number][] = [
   ["안동", "11H10501", 128.73, 36.57], ["포항", "11H10201", 129.34, 36.02], ["부산", "11H20201", 129.08, 35.18],
   ["울산", "11H20101", 129.31, 35.54], ["창원", "11H20301", 128.68, 35.23], ["진주", "11H20701", 128.11, 35.18],
   ["제주", "11G00201", 126.53, 33.5], ["서귀포", "11G00401", 126.56, 33.25],
+  // 섬 지점. 없으면 울릉도는 포항, 백령도는 인천 기온을 쓰게 된다. 육상 예보는 각각 경북, 서울·인천·경기 구역을 따른다.
+  ["울릉", "11E00101", 130.9, 37.48], ["백령도", "11A00101", 124.68, 37.97],
 ];
+/** 기온 지점 코드 -> 육상 예보구역. 섬 지점(11E 울릉, 11A 백령)은 육상 예보가 따로 없어 본토 구역을 쓴다. */
+function landFromTa(code: string) {
+  const zone = code[2];
+  if (zone === "E") return "11H10000";
+  if (zone === "A" || zone === "B") return "11B00000";
+  if (zone === "G") return "11G00000";
+  return `11${zone}${code[3]}0000`;
+}
+
 function nearestTa(lon: number, lat: number) {
   return TA_POINTS.reduce((best, p) =>
     (p[2] - lon) ** 2 + (p[3] - lat) ** 2 < (best[2] - lon) ** 2 + (best[3] - lat) ** 2 ? p : best,
@@ -125,7 +136,7 @@ export async function midTerm(apiKey: string, lon: number, lat: number, sido: st
   const ta = nearestTa(lon, lat);
   // 시도 코드는 행정구역 개편으로 바뀐다 (예: 광주·전남 -> 12). 모르는 코드면 가장 가까운 기온 지점이 속한
   // 육상 예보구역을 쓴다. 지점 코드 3~4번째 글자가 구역이다 (11D20501 -> 11D20000, 21F20801 -> 11F20000).
-  const regId = landRegId(sido, sigungu) ?? `11${ta[1][2]}${"BG".includes(ta[1][2]) ? "0" : ta[1][3]}0000`;
+  const regId = landRegId(sido, sigungu) ?? landFromTa(ta[1]);
   const tmFc = midBase();
   const [land, temp] = await Promise.all([
     callDataGoKr(apiKey, MID_LAND, { dataType: "JSON", numOfRows: 10, pageNo: 1, regId, tmFc }),
