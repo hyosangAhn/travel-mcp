@@ -4,11 +4,27 @@
 
 export type Point = { name: string; address?: string; x: number; y: number };
 
+const ATTEMPT_TIMEOUT_MS = 5000;
+
+/** Almost every tool geocodes through Kakao, so a hung call would stall all of them: time out and retry once. */
 async function kakaoGet(apiKey: string, url: URL) {
-  const res = await fetch(url, { headers: { Authorization: `KakaoAK ${apiKey}` } });
-  const json: any = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(`Kakao API ${url.pathname} failed (HTTP ${res.status}): ${json.msg ?? json.message ?? ""}`);
+  let res: Response | undefined;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      res = await fetch(url, {
+        headers: { Authorization: `KakaoAK ${apiKey}` },
+        signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
+      });
+      if (res.status < 500) break;
+    } catch (e) {
+      if (attempt === 1) throw new Error(`Kakao API ${url.pathname} failed: ${e instanceof Error ? e.name : e}`);
+    }
+  }
+  const json: any = await res!.json().catch(() => ({}));
+  if (!res!.ok) {
+    // Kakao echoes a malformed key back ("wrong appKey(<key>) format"); never pass it on to the model.
+    const msg = String(json.msg ?? json.message ?? "").replaceAll(apiKey, "***");
+    throw new Error(`Kakao API ${url.pathname} failed (HTTP ${res!.status}): ${msg}`);
   }
   return json;
 }

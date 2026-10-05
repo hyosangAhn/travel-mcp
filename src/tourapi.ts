@@ -83,15 +83,25 @@ export async function searchKeyword(
   apiKey: string,
   opts: { keyword: string; contentTypeId?: string; areaCode?: string; limit: number; page: number },
 ) {
+  // TourAPI has no relevance sort, so "경복궁" can list "경복궁 건청궁" first. On page 1 fetch a wider
+  // window (30), put exact title matches first, then titles starting with the keyword, and cut to limit.
+  // Later pages stay in plain API order so paging remains predictable.
+  const firstPage = opts.page === 1;
   const { items, totalCount } = await call(apiKey, "searchKeyword2", {
     keyword: opts.keyword,
     contentTypeId: opts.contentTypeId,
     lDongRegnCd: opts.areaCode,
-    numOfRows: opts.limit,
+    numOfRows: firstPage ? Math.max(opts.limit, 30) : opts.limit,
     pageNo: opts.page,
     arrange: "Q", // 수정일순, 대표이미지 있는 항목 우선
   });
-  return { totalCount, places: items.map(summarize) };
+  const k = opts.keyword.replace(/\s/g, "");
+  const rank = (it: Item) => {
+    const t = String(it.title ?? "").replace(/\s/g, "");
+    return t === k ? 0 : t.startsWith(k) ? 1 : 2;
+  };
+  const sorted = items.map((it, i) => ({ it, i })).sort((a, b) => rank(a.it) - rank(b.it) || a.i - b.i);
+  return { totalCount, places: sorted.slice(0, opts.limit).map(({ it }) => summarize(it)) };
 }
 
 export async function locationBased(

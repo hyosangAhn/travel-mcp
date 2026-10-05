@@ -18,7 +18,8 @@ export interface Env {
   CACHE?: KVNamespace;
 }
 
-const ok = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 1) }] });
+// Compact JSON: indentation is pure token overhead for the model reading it.
+const ok = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data) }] });
 const fail = (err: unknown) => ({
   isError: true,
   content: [{ type: "text" as const, text: err instanceof Error ? err.message : String(err) }],
@@ -259,7 +260,7 @@ function buildServer(env: Env) {
     {
       title: "날씨 예보",
       description:
-        "기상청 예보로 장소의 날짜별 최저/최고기온, 강수확률, 오전/오후 날씨를 준다. 약 3일은 단기예보(동네 단위), 그 뒤 10일까지는 중기예보(광역 단위)다.",
+        "기상청 예보로 장소의 날짜별 최저/최고기온, 강수확률, 오전/오후 날씨를 준다. 앞쪽 4~5일은 단기예보(5km 격자, source=단기), 그 뒤 10일차까지는 중기예보(광역 단위, source=중기)다.",
       inputSchema: z.object({ location }),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
@@ -339,7 +340,7 @@ function buildServer(env: Env) {
     },
     async ({ from, to, date, departAfter, departBefore, limit }) => {
       try {
-        return ok(await transport.trains(env.TOUR_API_KEY, from, to, date ?? kstNow().date, { departAfter, departBefore, limit }));
+        return ok(await transport.trains({ apiKey: env.TOUR_API_KEY, kv: env.CACHE }, from, to, date ?? kstNow().date, { departAfter, departBefore, limit }));
       } catch (e) {
         return fail(e);
       }
@@ -356,7 +357,7 @@ function buildServer(env: Env) {
     },
     async ({ from, to, date, departAfter, departBefore, limit }) => {
       try {
-        return ok(await transport.expressBuses(env.TOUR_API_KEY, from, to, date ?? kstNow().date, { departAfter, departBefore, limit }));
+        return ok(await transport.expressBuses({ apiKey: env.TOUR_API_KEY, kv: env.CACHE }, from, to, date ?? kstNow().date, { departAfter, departBefore, limit }));
       } catch (e) {
         return fail(e);
       }
@@ -373,7 +374,7 @@ function buildServer(env: Env) {
     },
     async ({ from, to, date, departAfter, departBefore, limit }) => {
       try {
-        return ok(await transport.flights(env.TOUR_API_KEY, from, to, date ?? kstNow().date, { departAfter, departBefore, limit }));
+        return ok(await transport.flights({ apiKey: env.TOUR_API_KEY, kv: env.CACHE }, from, to, date ?? kstNow().date, { departAfter, departBefore, limit }));
       } catch (e) {
         return fail(e);
       }
@@ -385,13 +386,21 @@ function buildServer(env: Env) {
 
 let handler: ReturnType<typeof createMcpHandler> | undefined;
 
+const encoder = new TextEncoder();
+/** Constant-time comparison so response timing doesn't leak how much of the token matched. */
+function sameSecret(a: string, b: string) {
+  const x = encoder.encode(a);
+  const y = encoder.encode(b);
+  return x.byteLength === y.byteLength && crypto.subtle.timingSafeEqual(x, y);
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (!env.MCP_PATH_TOKEN || env.MCP_PATH_TOKEN.length < 16) {
       return new Response("MCP_PATH_TOKEN secret is missing or too short", { status: 500 });
     }
     const route = `/mcp/${env.MCP_PATH_TOKEN}`;
-    if (new URL(request.url).pathname !== route) {
+    if (!sameSecret(new URL(request.url).pathname, route)) {
       return new Response("Not found", { status: 404 });
     }
     handler ??= createMcpHandler(() => buildServer(env), { route });

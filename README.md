@@ -49,7 +49,14 @@ npm install
 npm run dev   # http://localhost:8799/mcp/<MCP_PATH_TOKEN>
 ```
 
-[MCP Inspector](https://github.com/modelcontextprotocol/inspector)로 테스트할 수 있다: `npx @modelcontextprotocol/inspector`
+도구 12개를 한 번씩 호출해 보는 스모크 테스트 (토큰은 `.dev.vars`에서 읽고 출력하지 않는다):
+
+```bash
+npm run smoke                                          # 로컬 (npm run dev 실행 중)
+npm run smoke -- https://travel-mcp.<계정>.workers.dev   # 배포된 서버
+```
+
+[MCP Inspector](https://github.com/modelcontextprotocol/inspector)로도 테스트할 수 있다: `npx @modelcontextprotocol/inspector`
 (Transport: Streamable HTTP, URL: 위 주소)
 
 ## 배포

@@ -2,9 +2,28 @@
 // TAGO는 2022년 서비스 개편 후 경로가 /1613000/TrainInfo/GetXxx 형태다 (옛 TrainInfoService 경로는 폐기됨).
 // 시간표와 운임만 있고 좌석 잔여나 예매 기능은 없다.
 
+import { cached } from "./cache";
 import { callDataGoKr, lowerKeys, type Item } from "./datagokr";
 
 const TAGO = "https://apis.data.go.kr/1613000";
+
+/** data.go.kr key plus the optional KV namespace used for reference lists. */
+export type Ctx = { apiKey: string; kv?: KVNamespace };
+
+// 역·터미널·공항 목록은 거의 바뀌지 않는다. KV에 7일 두고, isolate 안에서는 메모리에 한 번 더 둔다.
+// 역 목록은 도시 16곳을 따로 불러야 해서(요청 하나에 외부 호출 18번), 캐시가 없으면 포털이 불안정할 때
+// 재시도까지 겹쳐 Workers 무료 플랜의 요청당 외부 호출 50번 한도를 넘을 수 있다.
+const REFERENCE_TTL_SECONDS = 7 * 24 * 3600;
+const memo = new Map<string, Promise<Item[]>>();
+function referenceList(ctx: Ctx, key: string, load: () => Promise<Item[]>) {
+  let p = memo.get(key);
+  if (!p) {
+    p = cached(ctx.kv, `tago:${key}:v1`, REFERENCE_TTL_SECONDS, load).then((r) => r.value);
+    p.catch(() => memo.delete(key));
+    memo.set(key, p);
+  }
+  return p;
+}
 
 async function tago(apiKey: string, path: string, params: Record<string, string | number | undefined>) {
   const { items } = await callDataGoKr(apiKey, `${TAGO}/${path}`, { _type: "json", numOfRows: 200, pageNo: 1, ...params });
@@ -59,31 +78,25 @@ function pick<T>(list: T[], name: (t: T) => string, query: string): T | undefine
 
 // ---------- 열차 ----------
 
-// 역 목록은 거의 바뀌지 않으니 isolate 수명 동안 캐시한다 (시도 수만큼 호출이 필요해서).
-let stationCache: Promise<Item[]> | undefined;
-function allStations(apiKey: string) {
-  stationCache ??= (async () => {
-    const cities = await tago(apiKey, "TrainInfo/GetCtyCodeList", {});
+function allStations(ctx: Ctx) {
+  return referenceList(ctx, "stations", async () => {
+    const cities = await tago(ctx.apiKey, "TrainInfo/GetCtyCodeList", {});
     const lists = await Promise.all(
-      cities.map((c) => tago(apiKey, "TrainInfo/GetCtyAcctoTrainSttnList", { cityCode: c.citycode, numOfRows: 500 })),
+      cities.map((c) => tago(ctx.apiKey, "TrainInfo/GetCtyAcctoTrainSttnList", { cityCode: c.citycode, numOfRows: 500 })),
     );
     return lists.flat();
-  })().catch((e) => {
-    stationCache = undefined;
-    throw e;
   });
-  return stationCache;
 }
 
-async function station(apiKey: string, query: string) {
-  const s = pick(await allStations(apiKey), (t) => String(t.nodename), query);
+async function station(ctx: Ctx, query: string) {
+  const s = pick(await allStations(ctx), (t) => String(t.nodename), query);
   if (!s) throw new Error(`기차역을 찾을 수 없음: "${query}"`);
   return { id: String(s.nodeid), name: String(s.nodename) };
 }
 
-export async function trains(apiKey: string, from: string, to: string, date: string, w: Window) {
-  const [dep, arr] = await Promise.all([station(apiKey, from), station(apiKey, to)]);
-  const rows = await tago(apiKey, "TrainInfo/GetStrtpntAlocFndTrainInfo", {
+export async function trains(ctx: Ctx, from: string, to: string, date: string, w: Window) {
+  const [dep, arr] = await Promise.all([station(ctx, from), station(ctx, to)]);
+  const rows = await tago(ctx.apiKey, "TrainInfo/GetStrtpntAlocFndTrainInfo", {
     depPlaceId: dep.id,
     arrPlaceId: arr.id,
     depPlandTime: date,
@@ -112,21 +125,21 @@ export async function trains(apiKey: string, from: string, to: string, date: str
 // ---------- 고속버스 ----------
 
 // 같은 터미널이 여러 ID로 등록돼 있고(예: 동서울 NAEK030~035) 노선마다 붙은 ID가 다르다.
-async function terminal(apiKey: string, query: string) {
-  const list = await tago(apiKey, "ExpBusInfo/GetExpBusTrminlList", { terminalNm: norm(query) || query });
-  const t = pick(list, (x) => String(x.terminalnm), query) ?? list[0];
+async function terminal(ctx: Ctx, query: string) {
+  const list = await referenceList(ctx, "terminals", () => tago(ctx.apiKey, "ExpBusInfo/GetExpBusTrminlList", { numOfRows: 2000 }));
+  const t = pick(list, (x) => String(x.terminalnm), query);
   if (!t) throw new Error(`고속버스 터미널을 찾을 수 없음: "${query}"`);
   const name = String(t.terminalnm);
   return { ids: list.filter((x) => String(x.terminalnm) === name).map((x) => String(x.terminalid)), name };
 }
 
-export async function expressBuses(apiKey: string, from: string, to: string, date: string, w: Window) {
-  const [dep, arr] = await Promise.all([terminal(apiKey, from), terminal(apiKey, to)]);
+export async function expressBuses(ctx: Ctx, from: string, to: string, date: string, w: Window) {
+  const [dep, arr] = await Promise.all([terminal(ctx, from), terminal(ctx, to)]);
   const pairs = dep.ids.flatMap((d) => arr.ids.map((a) => [d, a]));
   const rows = (
     await Promise.all(
       pairs.map(([d, a]) =>
-        tago(apiKey, "ExpBusInfo/GetStrtpntAlocFndExpbusInfo", {
+        tago(ctx.apiKey, "ExpBusInfo/GetStrtpntAlocFndExpbusInfo", {
           depTerminalId: d,
           arrTerminalId: a,
           depPlandTime: date,
@@ -160,20 +173,16 @@ export async function expressBuses(apiKey: string, from: string, to: string, dat
 
 // ---------- 국내선 ----------
 
-let airportCache: Promise<Item[]> | undefined;
-async function airport(apiKey: string, query: string) {
-  airportCache ??= tago(apiKey, "DmstcFlightNvgInfo/GetArprtList", {}).catch((e) => {
-    airportCache = undefined;
-    throw e;
-  });
-  const a = pick(await airportCache, (x) => String(x.airportnm), query);
+async function airport(ctx: Ctx, query: string) {
+  const list = await referenceList(ctx, "airports", () => tago(ctx.apiKey, "DmstcFlightNvgInfo/GetArprtList", {}));
+  const a = pick(list, (x) => String(x.airportnm), query);
   if (!a) throw new Error(`공항을 찾을 수 없음: "${query}"`);
   return { id: String(a.airportid), name: String(a.airportnm) };
 }
 
-export async function flights(apiKey: string, from: string, to: string, date: string, w: Window) {
-  const [dep, arr] = await Promise.all([airport(apiKey, from), airport(apiKey, to)]);
-  const rows = await tago(apiKey, "DmstcFlightNvgInfo/GetFlightOpratInfoList", {
+export async function flights(ctx: Ctx, from: string, to: string, date: string, w: Window) {
+  const [dep, arr] = await Promise.all([airport(ctx, from), airport(ctx, to)]);
+  const rows = await tago(ctx.apiKey, "DmstcFlightNvgInfo/GetFlightOpratInfoList", {
     depAirportId: dep.id,
     arrAirportId: arr.id,
     depPlandTime: date,
