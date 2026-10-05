@@ -1,6 +1,8 @@
 // 한국관광공사 TourAPI (KorService2) client.
 // Docs: https://www.data.go.kr/data/15101578/openapi.do
 
+import { callDataGoKr, type Item } from "./datagokr";
+
 const BASE = "https://apis.data.go.kr/B551011/KorService2";
 
 export const CONTENT_TYPES = {
@@ -35,45 +37,32 @@ export const AREA_CODES = {
   제주: "50",
 } as const;
 
+// 숙박 분류 (lclsSystm3). lclsSystmCode2?lclsSystm1=AC 로 조회한 값.
+export const STAY_TYPES = {
+  호텔: "AC010100",
+  콘도: "AC020100",
+  레지던스: "AC020200",
+  펜션: "AC030100",
+  한옥스테이: "AC030200",
+  농어촌민박: "AC030300",
+  홈스테이: "AC030400",
+  모텔: "AC040100",
+  일반야영장: "AC050100",
+  오토캠핑장: "AC050200",
+  카라반: "AC050300",
+  글램핑장: "AC050400",
+  유스호스텔: "AC060100",
+  게스트하우스: "AC060200",
+} as const;
+
+const STAY_TYPE_NAMES = Object.fromEntries(Object.entries(STAY_TYPES).map(([k, v]) => [v, k]));
+
 export type ContentTypeName = keyof typeof CONTENT_TYPES;
+export type StayTypeName = keyof typeof STAY_TYPES;
 export type AreaName = keyof typeof AREA_CODES;
 
-type Item = Record<string, string | number | undefined>;
-
-async function call(
-  apiKey: string,
-  operation: string,
-  params: Record<string, string | number | undefined>,
-): Promise<{ items: Item[]; totalCount: number }> {
-  const url = new URL(`${BASE}/${operation}`);
-  // serviceKey must be the *Decoding* key; URLSearchParams handles encoding.
-  url.searchParams.set("serviceKey", apiKey);
-  url.searchParams.set("MobileOS", "ETC");
-  url.searchParams.set("MobileApp", "travel-mcp");
-  url.searchParams.set("_type", "json");
-  for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== "") url.searchParams.set(k, String(v));
-  }
-
-  const res = await fetch(url);
-  const text = await res.text();
-  let json: any;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    // Auth/quota errors come back as XML regardless of _type.
-    const msg = text.match(/<returnAuthMsg>(.*?)<\/returnAuthMsg>/)?.[1] ?? text.slice(0, 300);
-    throw new Error(`TourAPI ${operation} failed (HTTP ${res.status}): ${msg}`);
-  }
-
-  const header = json?.response?.header;
-  if (header && header.resultCode !== "0000") {
-    throw new Error(`TourAPI ${operation} error ${header.resultCode}: ${header.resultMsg}`);
-  }
-  const body = json?.response?.body;
-  const raw = body?.items?.item; // array, single object, or "" when empty
-  const items: Item[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
-  return { items, totalCount: Number(body?.totalCount ?? items.length) };
+function call(apiKey: string, operation: string, params: Record<string, string | number | undefined>) {
+  return callDataGoKr(apiKey, `${BASE}/${operation}`, { MobileOS: "ETC", MobileApp: "travel-mcp", _type: "json", ...params });
 }
 
 function summarize(it: Item) {
@@ -143,6 +132,35 @@ export async function searchFestival(
   };
 }
 
+export async function searchStay(
+  apiKey: string,
+  opts: {
+    stayType?: string;
+    areaCode?: string;
+    near?: { x: number; y: number; radius: number };
+    limit: number;
+    page: number;
+  },
+) {
+  const common = { lclsSystm3: opts.stayType, numOfRows: opts.limit, pageNo: opts.page };
+  const { items, totalCount } = opts.near
+    ? await call(apiKey, "locationBasedList2", {
+        ...common,
+        contentTypeId: CONTENT_TYPES.숙박,
+        mapX: opts.near.x,
+        mapY: opts.near.y,
+        radius: opts.near.radius,
+        arrange: "E",
+      })
+    : await call(apiKey, "searchStay2", { ...common, lDongRegnCd: opts.areaCode, arrange: "Q" });
+  return {
+    totalCount,
+    stays: items.map((it) => ({ ...summarize(it), stayType: STAY_TYPE_NAMES[String(it.lclsSystm3)] })),
+  };
+}
+
+const fee = (v: unknown) => (Number(v) > 0 ? Number(v) : undefined);
+
 const stripHtml = (s: unknown) =>
   typeof s === "string" ? s.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").trim() : s;
 
@@ -165,10 +183,32 @@ export async function detail(apiKey: string, contentId: string) {
       )
     : undefined;
 
+  // 숙박은 detailInfo2에 객실별 인원과 비수기/성수기 요금이 있다 (업체가 등록한 참고값).
+  let rooms: unknown[] | undefined;
+  if (String(common.contenttypeid) === CONTENT_TYPES.숙박) {
+    try {
+      const { items } = await call(apiKey, "detailInfo2", { contentId, contentTypeId: CONTENT_TYPES.숙박 });
+      rooms = items.map((r) => ({
+        name: r.roomtitle,
+        sizePyeong: r.roomsize1 || undefined,
+        baseGuests: r.roombasecount ? Number(r.roombasecount) : undefined,
+        maxGuests: r.roommaxcount ? Number(r.roommaxcount) : undefined,
+        offSeasonWeekdayKrw: fee(r.roomoffseasonminfee1),
+        offSeasonWeekendKrw: fee(r.roomoffseasonminfee2),
+        peakSeasonWeekdayKrw: fee(r.roompeakseasonminfee1),
+        peakSeasonWeekendKrw: fee(r.roompeakseasonminfee2),
+        note: stripHtml(r.roomintro) || undefined,
+      }));
+    } catch {
+      rooms = undefined;
+    }
+  }
+
   return {
     ...summarize(common),
     homepage: stripHtml(common.homepage) || undefined,
     overview: stripHtml(common.overview) || undefined,
     intro: introClean,
+    rooms: rooms?.length ? rooms : undefined,
   };
 }

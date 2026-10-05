@@ -68,6 +68,22 @@ export async function geocode(apiKey: string, query: string): Promise<Point> {
   return { name: query, address: doc.address_name, x: Number(doc.x), y: Number(doc.y) };
 }
 
+/** 좌표의 법정동 코드. sido = 앞 2자리, sigungu = 앞 5자리 (data.go.kr lDong 코드와 같은 체계). */
+export async function regionCode(apiKey: string, x: number, y: number) {
+  const url = new URL("https://dapi.kakao.com/v2/local/geo/coord2regioncode.json");
+  url.searchParams.set("x", String(x));
+  url.searchParams.set("y", String(y));
+  const json = await kakaoGet(apiKey, url);
+  const b = (json.documents ?? []).find((d: any) => d.region_type === "B");
+  if (!b) throw new Error(`법정동 코드를 찾을 수 없음 (${x}, ${y})`);
+  return {
+    code: String(b.code),
+    sido: String(b.code).slice(0, 2),
+    sigungu: String(b.code).slice(0, 5),
+    name: [b.region_1depth_name, b.region_2depth_name].filter(Boolean).join(" "),
+  };
+}
+
 export async function carRoute(
   apiKey: string,
   origin: Point,
