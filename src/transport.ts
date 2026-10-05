@@ -77,26 +77,39 @@ export async function trains(apiKey: string, from: string, to: string, date: str
 
 // ---------- 고속버스 ----------
 
+// 같은 터미널이 여러 ID로 등록돼 있고(예: 동서울 NAEK030~035) 노선마다 붙은 ID가 다르다.
 async function terminal(apiKey: string, query: string) {
   const list = await tago(apiKey, "ExpBusInfo/GetExpBusTrminlList", { terminalNm: norm(query) || query });
   const t = pick(list, (x) => String(x.terminalnm), query) ?? list[0];
   if (!t) throw new Error(`고속버스 터미널을 찾을 수 없음: "${query}"`);
-  return { id: String(t.terminalid), name: String(t.terminalnm) };
+  const name = String(t.terminalnm);
+  return { ids: list.filter((x) => String(x.terminalnm) === name).map((x) => String(x.terminalid)), name };
 }
 
 export async function expressBuses(apiKey: string, from: string, to: string, date: string) {
   const [dep, arr] = await Promise.all([terminal(apiKey, from), terminal(apiKey, to)]);
-  const rows = await tago(apiKey, "ExpBusInfo/GetStrtpntAlocFndExpbusInfo", {
-    depTerminalId: dep.id,
-    arrTerminalId: arr.id,
-    depPlandTime: date,
-    numOfRows: 300,
-  });
+  const pairs = dep.ids.flatMap((d) => arr.ids.map((a) => [d, a]));
+  const rows = (
+    await Promise.all(
+      pairs.map(([d, a]) =>
+        tago(apiKey, "ExpBusInfo/GetStrtpntAlocFndExpbusInfo", {
+          depTerminalId: d,
+          arrTerminalId: a,
+          depPlandTime: date,
+          numOfRows: 300,
+        }),
+      ),
+    )
+  )
+    .flat()
+    .sort((x, y) => String(x.depplandtime).localeCompare(String(y.depplandtime)));
   return {
     from: dep.name,
     to: arr.name,
     date,
     count: rows.length,
+    // TAGO 고속버스 시간표는 오늘과 내일 것만 올라온다. 배차는 요일별로 거의 같아 가까운 날짜로 대신 볼 수 있다.
+    note: rows.length ? undefined : "고속버스 시간표는 오늘~내일분만 제공된다. 그 이후 날짜는 내일 날짜로 조회해 참고할 것.",
     buses: rows.map((r) => ({
       grade: r.gradenm,
       depart: hm(r.depplandtime),

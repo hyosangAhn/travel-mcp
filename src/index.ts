@@ -337,7 +337,7 @@ function buildServer(env: Env) {
     "search_express_buses",
     {
       title: "고속버스 시간표",
-      description: "고속버스 시간표, 등급(일반/우등/프리미엄), 운임. 좌석 잔여와 예매는 지원하지 않는다.",
+      description: "고속버스 시간표, 등급(일반/우등/프리미엄), 운임. 시간표는 오늘과 내일분만 제공된다. 좌석 잔여와 예매는 지원하지 않는다.",
       inputSchema: schedule("고속버스 터미널", "동서울", "강릉"),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
