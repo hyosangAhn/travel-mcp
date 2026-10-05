@@ -6,6 +6,30 @@ export type Item = Record<string, string | number | undefined>;
 
 const SUCCESS = new Set(["00", "0000"]);
 
+const RETRY_DELAYS_MS = [400, 1200];
+const ATTEMPT_TIMEOUT_MS = 8000;
+
+/**
+ * apis.data.go.kr is flaky: 5xx (incl. Cloudflare 522 origin timeouts), hung
+ * connections, and "서비스 연결실패" bodies all clear up on retry. Retry those
+ * up to twice with backoff; anything else (auth, bad params) fails at once.
+ */
+async function fetchWithRetry(u: URL, service: string) {
+  let lastError = "";
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt - 1]));
+    try {
+      const res = await fetch(u, { signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS) });
+      const text = await res.text();
+      if (res.status < 500 && !text.includes("연결실패")) return { res, text };
+      lastError = `HTTP ${res.status}`;
+    } catch (e) {
+      lastError = e instanceof Error && e.name === "TimeoutError" ? "timeout" : String(e);
+    }
+  }
+  throw new Error(`${service} failed after ${RETRY_DELAYS_MS.length + 1} attempts (${lastError}) — 공공데이터포털 일시 장애일 수 있음`);
+}
+
 export async function callDataGoKr(
   apiKey: string,
   url: string,
@@ -18,14 +42,8 @@ export async function callDataGoKr(
     if (v !== undefined && v !== "") u.searchParams.set(k, String(v));
   }
 
-  // The gateway intermittently answers "서비스 연결실패" (backend unreachable); one retry usually clears it.
-  let res = await fetch(u);
-  let text = await res.text();
-  if (res.status >= 500 || text.includes("연결실패")) {
-    res = await fetch(u);
-    text = await res.text();
-  }
   const service = u.pathname.split("/").slice(2).join("/");
+  const { res, text } = await fetchWithRetry(u, service);
   let json: any;
   try {
     json = JSON.parse(text);

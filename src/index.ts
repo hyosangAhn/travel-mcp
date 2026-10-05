@@ -287,21 +287,29 @@ function buildServer(env: Env) {
     {
       title: "관광지 혼잡도 예측",
       description:
-        "한국관광공사 집중률 예측(향후 30일, 0~100)으로 관광지가 붐비는 날과 한산한 날을 알려준다. attraction을 주면 그 관광지의 일별 값을, 생략하면 시군구 내 관광지별 요약을 준다.",
+        "한국관광공사 집중률 예측(향후 30일, 0~100)으로 관광지가 붐비는 날과 한산한 날을 알려준다. 시군구 내 관광지를 기간 평균 집중률이 높은 순으로 limit개 준다. 여행 날짜가 정해졌으면 startDate/endDate를 주면 그 기간 기준으로 정렬한다. attraction을 주면 그 관광지의 일별 값도 준다.",
       inputSchema: z.object({
         location: location.describe("관광지나 지역 이름. 이 위치의 시군구를 조회한다"),
         attraction: z.string().optional().describe('관광지 이름 필터 (예: "경포대")'),
-        startDate: date.optional(),
-        endDate: date.optional(),
+        startDate: date.optional().describe("기간 시작 (YYYYMMDD)"),
+        endDate: date.optional().describe("기간 끝 (YYYYMMDD)"),
+        limit: z.number().int().min(1).max(50).default(10).describe("관광지 수"),
       }),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ location, attraction, startDate, endDate }) => {
+    async ({ location, attraction, startDate, endDate, limit }) => {
       try {
         const p = await kakao.geocode(env.KAKAO_REST_KEY, location);
         const region = await kakao.regionCode(env.KAKAO_REST_KEY, p.x, p.y);
         return ok(
-          await crowdForecast(env.TOUR_API_KEY, { sido: region.sido, sigungu: region.sigungu, attraction, startDate, endDate }),
+          await crowdForecast(env.TOUR_API_KEY, {
+            sido: region.sido,
+            sigungu: region.sigungu,
+            attraction,
+            startDate,
+            endDate,
+            limit,
+          }),
         );
       } catch (e) {
         return fail(e);

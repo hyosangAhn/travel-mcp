@@ -55,17 +55,23 @@ export async function searchKeyword(
   }));
 }
 
-/** Resolve a place name or address to coordinates (keyword search first, then address search). */
+/**
+ * Resolve a place name or address to coordinates.
+ * Address search first, so regions ("가평군", "제주시 애월읍") resolve to the region itself
+ * instead of whichever POI ranks first for that keyword (가평군 -> 국립유명산자연휴양림).
+ * Place names ("강릉역", "경포대") don't match as addresses and fall through to keyword search.
+ */
 export async function geocode(apiKey: string, query: string): Promise<Point> {
-  const [hit] = await searchKeyword(apiKey, { query, limit: 1 });
-  if (hit) return { name: hit.name, address: hit.address, x: hit.x, y: hit.y };
-
   const url = new URL("https://dapi.kakao.com/v2/local/search/address.json");
   url.searchParams.set("query", query);
-  const json = await kakaoGet(apiKey, url);
-  const doc = json.documents?.[0];
-  if (!doc) throw new Error(`위치를 찾을 수 없음: "${query}"`);
-  return { name: query, address: doc.address_name, x: Number(doc.x), y: Number(doc.y) };
+  url.searchParams.set("analyze_type", "exact");
+  url.searchParams.set("size", "1");
+  const doc = (await kakaoGet(apiKey, url)).documents?.[0];
+  if (doc) return { name: query, address: doc.address_name, x: Number(doc.x), y: Number(doc.y) };
+
+  const [hit] = await searchKeyword(apiKey, { query, limit: 1 });
+  if (hit) return { name: hit.name, address: hit.address, x: hit.x, y: hit.y };
+  throw new Error(`위치를 찾을 수 없음: "${query}"`);
 }
 
 /** 좌표의 법정동 코드. sido = 앞 2자리, sigungu = 앞 5자리 (data.go.kr lDong 코드와 같은 체계). */

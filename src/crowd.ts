@@ -6,9 +6,13 @@ import { callDataGoKr, lowerKeys } from "./datagokr";
 
 const URL_ = "https://apis.data.go.kr/B551011/TatsCnctrRateService/tatsCnctrRatedList";
 
+const round1 = (n: number) => Math.round(n * 10) / 10;
+/** "20261008" + 18.9 -> "10/08 19" — compact so a district-wide answer stays small for the LLM. */
+const fmt = (d: { date: string; rate: number }) => `${d.date.slice(4, 6)}/${d.date.slice(6, 8)} ${Math.round(d.rate)}`;
+
 export async function crowdForecast(
   apiKey: string,
-  opts: { sido: string; sigungu: string; attraction?: string; startDate?: string; endDate?: string },
+  opts: { sido: string; sigungu: string; attraction?: string; startDate?: string; endDate?: string; limit: number },
 ) {
   const { items } = await callDataGoKr(apiKey, URL_, {
     MobileOS: "ETC",
@@ -30,20 +34,28 @@ export async function crowdForecast(
     if (!byPlace.has(name)) byPlace.set(name, []);
     byPlace.get(name)!.push({ date: String(r.baseymd), rate: Number(r.cnctrrate) });
   }
-  const places = [...byPlace.entries()].map(([name, days]) => {
-    days.sort((a, b) => a.date.localeCompare(b.date));
-    const sorted = [...days].sort((a, b) => a.rate - b.rate);
-    return {
-      attraction: name,
-      quietestDays: sorted.slice(0, 3),
-      busiestDays: sorted.slice(-3).reverse(),
-      // 시군구 전체 조회는 관광지 수 x 30일이라 너무 길다. 특정 관광지를 물었을 때만 일별 값을 준다.
-      daily: opts.attraction ? days : undefined,
-    };
-  });
+
+  // 기간 평균이 높은 순 = 그 기간에 사람이 몰리는 대표 관광지 순. 하위권에는 묘역·시설 같은 잡음 항목이 많아 limit으로 자른다.
+  const places = [...byPlace.entries()]
+    .map(([name, days]) => {
+      days.sort((a, b) => a.date.localeCompare(b.date));
+      const byRate = [...days].sort((a, b) => a.rate - b.rate);
+      return {
+        attraction: name,
+        avgRate: round1(days.reduce((s, d) => s + d.rate, 0) / days.length),
+        quietest: byRate.slice(0, 2).map(fmt),
+        busiest: byRate.slice(-2).reverse().map(fmt),
+        // 특정 관광지를 물었을 때만 일별 값을 준다.
+        daily: opts.attraction ? days.map(fmt) : undefined,
+      };
+    })
+    .sort((a, b) => b.avgRate - a.avgRate);
+
   return {
     district: String(rows[0]?.signgunm ?? opts.sigungu),
-    note: "집중률은 0~100 지수. 높을수록 붐빈다 (이동통신 데이터 기반 예측).",
-    places,
+    period: rows.length ? `${opts.startDate ?? rows.map((r) => String(r.baseymd)).sort()[0]}~${opts.endDate ?? "+30일"}` : undefined,
+    note: "집중률 0~100, 높을수록 붐빈다. 값 형식은 'MM/DD 집중률'. avgRate는 기간 평균이며 높은 순으로 정렬.",
+    totalAttractions: places.length,
+    places: places.slice(0, opts.limit),
   };
 }
