@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "travel-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true }
+  // Secrets (set with `npx wrangler secret put <NAME>`, never commit them):
+  //   TOUR_API_KEY    - data.go.kr TourAPI 인증키 (Decoding 키)
+  //   KAKAO_REST_KEY  - Kakao Developers REST API 키
+  //   MCP_PATH_TOKEN  - 추측 불가능한 랜덤 문자열 (엔드포인트: /mcp/<token>)
+}

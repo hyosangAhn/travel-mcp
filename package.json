@@ -1,0 +1,29 @@
+{
+  "name": "travel-mcp",
+  "version": "1.0.0",
+  "description": "TourAPI + Kakao travel tools as a remote MCP server (Cloudflare Workers)",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "cf-typegen": "wrangler types"
+  },
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/server": "^2.3.0",
+    "agents": "^0.26.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261005.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.147.0"
+  },
+  "private": true,
+  "allowScripts": {
+    "workerd@1.20261001.1": true,
+    "esbuild@0.28.2": true,
+    "esbuild@0.28.1": true
+  }
+}
