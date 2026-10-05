@@ -18,6 +18,35 @@ const hm = (v: unknown) => {
 const won = (v: unknown) => (Number(v) > 0 ? Number(v) : undefined);
 const norm = (s: string) => s.replace(/\s|역$|터미널$|종합|고속|버스|공항$/g, "");
 
+/** 출발 시각 범위와 개수 제한. 김포-제주처럼 하루 100편이 넘는 구간에서 응답을 줄인다. */
+export type Window = { departAfter?: string; departBefore?: string; limit: number };
+
+const toHm = (t: string) => {
+  const d = t.replace(":", "").padStart(4, "0");
+  return `${d.slice(0, 2)}:${d.slice(2, 4)}`;
+};
+
+/** Keep departures in [departAfter, departBefore] (inclusive, "HH:MM"), sorted, at most limit. */
+function windowed<T extends { depart?: string }>(list: T[], w: Window) {
+  const after = w.departAfter ? toHm(w.departAfter) : "00:00";
+  const before = w.departBefore ? toHm(w.departBefore) : "99:99";
+  const inRange = list
+    .filter((x) => x.depart !== undefined && x.depart >= after && x.depart <= before)
+    .sort((a, b) => String(a.depart).localeCompare(String(b.depart)));
+  return {
+    totalCount: list.length,
+    matchedCount: inRange.length,
+    truncated: inRange.length > w.limit ? `출발 시각 순 앞 ${w.limit}개만 표시. departAfter로 뒤 시간대를 볼 수 있다.` : undefined,
+    items: inRange.slice(0, w.limit),
+  };
+}
+
+/** Expose windowed items under a tool-specific key (trains / buses / flights). */
+function rename<R extends { items: unknown[] }>(r: R, key: string) {
+  const { items, ...rest } = r;
+  return { ...rest, [key]: items };
+}
+
 /** Pick the candidate whose name matches best: exact > startsWith > includes. */
 function pick<T>(list: T[], name: (t: T) => string, query: string): T | undefined {
   const q = norm(query);
@@ -52,7 +81,7 @@ async function station(apiKey: string, query: string) {
   return { id: String(s.nodeid), name: String(s.nodename) };
 }
 
-export async function trains(apiKey: string, from: string, to: string, date: string) {
+export async function trains(apiKey: string, from: string, to: string, date: string, w: Window) {
   const [dep, arr] = await Promise.all([station(apiKey, from), station(apiKey, to)]);
   const rows = await tago(apiKey, "TrainInfo/GetStrtpntAlocFndTrainInfo", {
     depPlaceId: dep.id,
@@ -64,14 +93,19 @@ export async function trains(apiKey: string, from: string, to: string, date: str
     from: dep.name,
     to: arr.name,
     date,
-    count: rows.length,
-    trains: rows.map((r) => ({
-      grade: r.traingradename,
-      trainNo: r.trainno,
-      depart: hm(r.depplandtime),
-      arrive: hm(r.arrplandtime),
-      adultFareKrw: won(r.adultcharge),
-    })),
+    ...rename(
+      windowed(
+        rows.map((r) => ({
+          grade: r.traingradename,
+          trainNo: r.trainno,
+          depart: hm(r.depplandtime),
+          arrive: hm(r.arrplandtime),
+          adultFareKrw: won(r.adultcharge),
+        })),
+        w,
+      ),
+      "trains",
+    ),
   };
 }
 
@@ -86,7 +120,7 @@ async function terminal(apiKey: string, query: string) {
   return { ids: list.filter((x) => String(x.terminalnm) === name).map((x) => String(x.terminalid)), name };
 }
 
-export async function expressBuses(apiKey: string, from: string, to: string, date: string) {
+export async function expressBuses(apiKey: string, from: string, to: string, date: string, w: Window) {
   const [dep, arr] = await Promise.all([terminal(apiKey, from), terminal(apiKey, to)]);
   const pairs = dep.ids.flatMap((d) => arr.ids.map((a) => [d, a]));
   const rows = (
@@ -107,15 +141,20 @@ export async function expressBuses(apiKey: string, from: string, to: string, dat
     from: dep.name,
     to: arr.name,
     date,
-    count: rows.length,
     // TAGO 고속버스 시간표는 오늘과 내일 것만 올라온다. 배차는 요일별로 거의 같아 가까운 날짜로 대신 볼 수 있다.
     note: rows.length ? undefined : "고속버스 시간표는 오늘~내일분만 제공된다. 그 이후 날짜는 내일 날짜로 조회해 참고할 것.",
-    buses: rows.map((r) => ({
-      grade: r.gradenm,
-      depart: hm(r.depplandtime),
-      arrive: hm(r.arrplandtime),
-      fareKrw: won(r.charge),
-    })),
+    ...rename(
+      windowed(
+        rows.map((r) => ({
+          grade: r.gradenm,
+          depart: hm(r.depplandtime),
+          arrive: hm(r.arrplandtime),
+          fareKrw: won(r.charge),
+        })),
+        w,
+      ),
+      "buses",
+    ),
   };
 }
 
@@ -132,7 +171,7 @@ async function airport(apiKey: string, query: string) {
   return { id: String(a.airportid), name: String(a.airportnm) };
 }
 
-export async function flights(apiKey: string, from: string, to: string, date: string) {
+export async function flights(apiKey: string, from: string, to: string, date: string, w: Window) {
   const [dep, arr] = await Promise.all([airport(apiKey, from), airport(apiKey, to)]);
   const rows = await tago(apiKey, "DmstcFlightNvgInfo/GetFlightOpratInfoList", {
     depAirportId: dep.id,
@@ -144,14 +183,19 @@ export async function flights(apiKey: string, from: string, to: string, date: st
     from: dep.name,
     to: arr.name,
     date,
-    count: rows.length,
-    flights: rows.map((r) => ({
-      airline: r.airlinenm,
-      flightNo: r.vihicleid,
-      depart: hm(r.depplandtime),
-      arrive: hm(r.arrplandtime),
-      economyFareKrw: won(r.economycharge),
-      prestigeFareKrw: won(r.prestigecharge),
-    })),
+    ...rename(
+      windowed(
+        rows.map((r) => ({
+          airline: r.airlinenm,
+          flightNo: r.vihicleid,
+          depart: hm(r.depplandtime),
+          arrive: hm(r.arrplandtime),
+          economyFareKrw: won(r.economycharge),
+          prestigeFareKrw: won(r.prestigecharge),
+        })),
+        w,
+      ),
+      "flights",
+    ),
   };
 }

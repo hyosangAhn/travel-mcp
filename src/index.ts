@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
+import { cached } from "./cache";
 import { crowdForecast } from "./crowd";
 import { kstNow } from "./datagokr";
 import * as kakao from "./kakao";
@@ -13,6 +14,8 @@ export interface Env {
   KAKAO_REST_KEY: string;
   /** Secret path segment: the MCP endpoint is served at /mcp/<MCP_PATH_TOKEN>. */
   MCP_PATH_TOKEN: string;
+  /** Optional KV namespace for caching festival lists. Without it, calls go straight to data.go.kr. */
+  CACHE?: KVNamespace;
 }
 
 const ok = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 1) }] });
@@ -33,6 +36,7 @@ const limit = z.number().int().min(1).max(30).default(10).describe("결과 개�
 const page = z.number().int().min(1).default(1).describe("페이지 번호");
 const location = z.string().min(1).describe('장소명이나 주소 (예: "강릉역", "제주시 애월읍")');
 
+const hhmm = z.string().regex(/^([01]\d|2[0-3]):?[0-5]\d$/);
 const date = z.string().regex(/^\d{8}$/).describe("날짜 (YYYYMMDD)");
 
 function buildServer(env: Env) {
@@ -167,15 +171,21 @@ function buildServer(env: Env) {
     },
     async ({ startDate, endDate, area, limit, page }) => {
       try {
-        return ok(
-          await tour.searchFestival(env.TOUR_API_KEY, {
-            startDate,
-            endDate,
-            areaCode: area && tour.AREA_CODES[area],
-            limit,
-            page,
-          }),
+        // 축제 목록은 하루 단위로 거의 안 바뀐다. 12시간 캐시하고, 포털 장애 때는 이전 결과로 답한다.
+        const { value, cache } = await cached(
+          env.CACHE,
+          `festival:${startDate}:${endDate ?? ""}:${area ?? ""}:${limit}:${page}`,
+          12 * 3600,
+          () =>
+            tour.searchFestival(env.TOUR_API_KEY, {
+              startDate,
+              endDate,
+              areaCode: area && tour.AREA_CODES[area],
+              limit,
+              page,
+            }),
         );
+        return ok({ ...value, cache });
       } catch (e) {
         return fail(e);
       }
@@ -287,29 +297,21 @@ function buildServer(env: Env) {
     {
       title: "관광지 혼잡도 예측",
       description:
-        "한국관광공사 집중률 예측(향후 30일, 0~100)으로 관광지가 붐비는 날과 한산한 날을 알려준다. 시군구 내 관광지를 기간 평균 집중률이 높은 순으로 limit개 준다. 여행 날짜가 정해졌으면 startDate/endDate를 주면 그 기간 기준으로 정렬한다. attraction을 주면 그 관광지의 일별 값도 준다.",
+        "한국관광공사 집중률 예측(향후 30일)으로 언제 덜 붐비는지 알려준다. attraction 없이 부르면 그 시군구의 날짜별 혼잡 추세(관광지 중앙값)와 관광지 이름 목록을, attraction을 주면 그 관광지의 날짜별 값을 준다. 값은 관광지별 상대 지수라 서로 다른 관광지끼리는 비교하지 말 것.",
       inputSchema: z.object({
         location: location.describe("관광지나 지역 이름. 이 위치의 시군구를 조회한다"),
-        attraction: z.string().optional().describe('관광지 이름 필터 (예: "경포대")'),
+        attraction: z.string().optional().describe('관광지 이름 필터 (예: "쁘띠프랑스"). 지역 조회 결과의 목록에서 고르면 정확하다'),
         startDate: date.optional().describe("기간 시작 (YYYYMMDD)"),
         endDate: date.optional().describe("기간 끝 (YYYYMMDD)"),
-        limit: z.number().int().min(1).max(50).default(10).describe("관광지 수"),
       }),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ location, attraction, startDate, endDate, limit }) => {
+    async ({ location, attraction, startDate, endDate }) => {
       try {
         const p = await kakao.geocode(env.KAKAO_REST_KEY, location);
         const region = await kakao.regionCode(env.KAKAO_REST_KEY, p.x, p.y);
         return ok(
-          await crowdForecast(env.TOUR_API_KEY, {
-            sido: region.sido,
-            sigungu: region.sigungu,
-            attraction,
-            startDate,
-            endDate,
-            limit,
-          }),
+          await crowdForecast(env.TOUR_API_KEY, { sido: region.sido, sigungu: region.sigungu, attraction, startDate, endDate }),
         );
       } catch (e) {
         return fail(e);
@@ -322,6 +324,9 @@ function buildServer(env: Env) {
       from: z.string().min(1).describe(`출발 ${what} (예: "${from}")`),
       to: z.string().min(1).describe(`도착 ${what} (예: "${to}")`),
       date: date.optional().describe("출발 날짜 (YYYYMMDD). 생략하면 오늘"),
+      departAfter: hhmm.optional().describe('이 시각 이후 출발 (예: "09:00")'),
+      departBefore: hhmm.optional().describe('이 시각 이전 출발 (예: "13:00")'),
+      limit: z.number().int().min(1).max(100).default(20).describe("최대 편수 (출발 시각 순)"),
     });
 
   server.registerTool(
@@ -332,9 +337,9 @@ function buildServer(env: Env) {
       inputSchema: schedule("역", "서울", "강릉"),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ from, to, date }) => {
+    async ({ from, to, date, departAfter, departBefore, limit }) => {
       try {
-        return ok(await transport.trains(env.TOUR_API_KEY, from, to, date ?? kstNow().date));
+        return ok(await transport.trains(env.TOUR_API_KEY, from, to, date ?? kstNow().date, { departAfter, departBefore, limit }));
       } catch (e) {
         return fail(e);
       }
@@ -349,9 +354,9 @@ function buildServer(env: Env) {
       inputSchema: schedule("고속버스 터미널", "동서울", "강릉"),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ from, to, date }) => {
+    async ({ from, to, date, departAfter, departBefore, limit }) => {
       try {
-        return ok(await transport.expressBuses(env.TOUR_API_KEY, from, to, date ?? kstNow().date));
+        return ok(await transport.expressBuses(env.TOUR_API_KEY, from, to, date ?? kstNow().date, { departAfter, departBefore, limit }));
       } catch (e) {
         return fail(e);
       }
@@ -366,9 +371,9 @@ function buildServer(env: Env) {
       inputSchema: schedule("공항", "김포", "제주"),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ from, to, date }) => {
+    async ({ from, to, date, departAfter, departBefore, limit }) => {
       try {
-        return ok(await transport.flights(env.TOUR_API_KEY, from, to, date ?? kstNow().date));
+        return ok(await transport.flights(env.TOUR_API_KEY, from, to, date ?? kstNow().date, { departAfter, departBefore, limit }));
       } catch (e) {
         return fail(e);
       }

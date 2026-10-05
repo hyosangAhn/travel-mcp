@@ -6,7 +6,7 @@ export type Item = Record<string, string | number | undefined>;
 
 const SUCCESS = new Set(["00", "0000"]);
 
-const RETRY_DELAYS_MS = [400, 1200];
+const RETRY_DELAYS_MS = [500, 1500];
 const ATTEMPT_TIMEOUT_MS = 8000;
 
 /**
