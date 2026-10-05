@@ -1,4 +1,0 @@
-# Copy to .dev.vars for `npm run dev` (local only, gitignored)
-TOUR_API_KEY=your-data-go-kr-decoding-key
-KAKAO_REST_KEY=your-kakao-rest-api-key
-MCP_PATH_TOKEN=local-dev-token-0123456789

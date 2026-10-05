@@ -36,10 +36,17 @@ URL 하나로 claude.ai(웹, 모바일), Claude Desktop, Claude Code, ChatGPT(De
 
 ## 로컬 실행
 
+프로젝트 루트에 `.dev.vars` 파일을 만들고 키를 넣는다 (gitignore 대상이라 커밋되지 않는다).
+
+```
+TOUR_API_KEY=<data.go.kr Decoding 키>
+KAKAO_REST_KEY=<카카오 REST API 키>
+MCP_PATH_TOKEN=<16자 이상 랜덤 문자열>
+```
+
 ```bash
 npm install
-cp .dev.vars.example .dev.vars   # 실제 키로 수정
-npm run dev                       # http://localhost:8799/mcp/<MCP_PATH_TOKEN>
+npm run dev   # http://localhost:8799/mcp/<MCP_PATH_TOKEN>
 ```
 
 [MCP Inspector](https://github.com/modelcontextprotocol/inspector)로 테스트할 수 있다: `npx @modelcontextprotocol/inspector`
